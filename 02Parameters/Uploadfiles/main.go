@@ -58,6 +58,36 @@ func main() {
 		context.String(http.StatusOK, "Uploads success")
 	})
 
+	router.POST("/upload_multiple_file", func(context *gin.Context) {
+		form, err := context.MultipartForm()
+		if err != nil {
+			context.String(500, fmt.Sprintf("get form err: %s", err.Error()))
+		}
+		files := form.File["files"]
+
+		for _, file := range files {
+			log.Println(file.Filename)
+
+			filename, err := generateName()
+			if err != nil {
+				context.String(500, fmt.Sprintf("generate name err: %s", err.Error()))
+				return
+			}
+			// 获取文件后缀类型
+			ext := path.Ext(file.Filename)
+
+			// 保存文件
+			err = context.SaveUploadedFile(file, "./Uploads/"+filename+ext)
+			if err != nil {
+				context.String(500, fmt.Sprintf("Uploads file err: %s", err.Error()))
+				return
+			}
+
+		}
+
+		context.String(http.StatusOK, "Uploads success")
+	})
+
 	err := router.Run()
 	if err != nil {
 		return
