@@ -11,6 +11,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 	"net/http"
@@ -37,18 +38,20 @@ func resultWithErrorMessage(message string, c *gin.Context) {
 	result(ERROR, message, map[string]interface{}{}, c)
 }
 
+func resultWithSuccessMessage(message string, c *gin.Context) {
+	result(SUCCESS, message, map[string]interface{}{}, c)
+}
+
 func resultWithSuccessMessageData(message string, data interface{}, c *gin.Context) {
 	result(SUCCESS, message, data, c)
 }
 
 var (
-	signKey   *rsa.PrivateKey
-	verifyKey *rsa.PublicKey
+	signKey *rsa.PrivateKey
 )
 
 var (
 	prvkey []byte
-	pubkey []byte
 )
 
 type userInfo struct {
@@ -74,7 +77,60 @@ func main() {
 		loginGroup.POST("/login", login)
 	}
 
+	actionsGroup := router.Group("")
+	actionsGroup.Use(JwtAuth)
+	{
+		actionsGroup.GET("/hello", hello)
+	}
+
 	_ = router.Run()
+}
+
+func hello(c *gin.Context) {
+	claims, ok := c.Get("claims")
+	if !ok {
+		resultWithErrorMessage("认证失败", c)
+		return
+	}
+	infoClaims, ok := claims.(*userInfoClaims)
+	if !ok {
+		resultWithErrorMessage("token有误", c)
+		return
+	}
+	resultWithSuccessMessage("你经过认证了"+infoClaims.userInfo.Name, c)
+}
+
+// JwtAuth
+// Jwt认证中间件
+func JwtAuth(c *gin.Context) {
+	token := c.Request.Header.Get("x-token")
+	if token == "" {
+		resultWithErrorMessage("未登录或非法访问", c)
+		c.Abort()
+		return
+	}
+
+	claims, err := validToken(token)
+	if err != nil {
+		resultWithErrorMessage("token有误!", c)
+		c.Abort()
+		return
+	}
+
+	tokenStorageInterface, ok := tokenCache.Load(claims.userInfo.Name)
+	if !ok {
+		resultWithErrorMessage("token不存在此工作负载上!", c)
+		c.Abort()
+		return
+	}
+	tokenStorage := tokenStorageInterface.(string)
+	if tokenStorage != token {
+		resultWithErrorMessage("token不一致!", c)
+		c.Abort()
+		return
+	}
+	c.Set("claims", claims)
+	c.Next()
 }
 
 func login(c *gin.Context) {
@@ -85,8 +141,7 @@ func login(c *gin.Context) {
 		return
 	}
 	if _, ok := tokenCache.Load(username); ok {
-		resultWithErrorMessage("您已经在别处登录", c)
-		return
+		tokenCache.Delete(username)
 	}
 
 	token, err := createToken(username)
@@ -117,6 +172,20 @@ func createToken(user string) (string, error) {
 	return t.SignedString(prvkey)
 }
 
+func validToken(tokenString string) (*userInfoClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &userInfoClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return prvkey, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(*userInfoClaims); ok && token.Valid {
+		return claims, nil
+	}
+	return nil, errors.New("claims Error")
+}
+
 func initKey() {
 	var err error
 	signKey, err = rsa.GenerateKey(rand.Reader, 256)
@@ -129,15 +198,5 @@ func initKey() {
 		Bytes: derStream,
 	}
 	prvkey = pem.EncodeToMemory(block)
-	verifyKey = &signKey.PublicKey
-	derPkix, err := x509.MarshalPKIXPublicKey(verifyKey)
-	if err != nil {
-		panic(err)
-	}
-	block = &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: derPkix,
-	}
-	pubkey = pem.EncodeToMemory(block)
 
 }
