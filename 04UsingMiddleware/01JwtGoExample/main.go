@@ -157,8 +157,6 @@ func login(c *gin.Context) {
 
 }
 
-//todo: token验证
-
 func createToken(user string) (string, error) {
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, userInfoClaims{
 		&jwt.StandardClaims{
